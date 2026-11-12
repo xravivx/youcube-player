@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="robots" content="noindex">
+  <title>YouCube Player</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    #p, iframe { width: 100%; height: 100%; border: 0; display: block; }
+  </style>
+</head>
+<body>
+  <div id="p"></div>
+  <!--
+    YouCube relay player.
+    The YouCube TV app loads from file://, which YouTube's embed rejects (error 152/153).
+    The app embeds THIS page instead; this page hosts the YouTube player from a real https origin
+    and talks to the app with postMessage. No keys, no data, no tracking here.
+
+    Parent → this page:  { yc: 1, cmd: 'play' | 'pause' | 'seek' | 'load', t?, id? }
+    This page → parent:  { yc: 1, type: 'ready' | 'state' | 'ended' | 'error', ... }
+  -->
+  <script>
+  (function () {
+    'use strict';
+    var VALID_ID = /^[A-Za-z0-9_-]{11}$/;
+    var q = {};
+    location.search.replace(/^\?/, '').split('&').forEach(function (kv) {
+      if (!kv) return;
+      var i = kv.indexOf('=');
+      if (i < 0) return;
+      q[decodeURIComponent(kv.slice(0, i))] = decodeURIComponent(kv.slice(i + 1));
+    });
+
+    var player = null, ready = false;
+
+    function send(msg) {
+      msg.yc = 1;
+      try { window.parent.postMessage(msg, '*'); } catch (e) { /* no parent */ }
+    }
+
+    function sendState() {
+      if (!ready) return;
+      send({
+        type: 'state',
+        state: player.getPlayerState(),
+        time: player.getCurrentTime() || 0,
+        duration: player.getDuration() || 0
+      });
+    }
+
+    if (!VALID_ID.test(q.v || '')) { send({ type: 'error', code: 'id' }); return; }
+
+    window.onYouTubeIframeAPIReady = function () {
+      player = new YT.Player('p', {
+        host: q.host === 'youtube' ? 'https://www.youtube.com' : 'https://www.youtube-nocookie.com',
+        videoId: q.v,
+        width: '100%',
+        height: '100%',
+        playerVars: {
+          autoplay: 1, controls: 0, rel: 0, iv_load_policy: 3, fs: 0, disablekb: 1,
+          modestbranding: 1, playsinline: 1, cc_load_policy: 0, enablejsapi: 1,
+          hl: q.hl || 'en', origin: location.origin, widget_referrer: location.href
+        },
+        events: {
+          onReady: function (e) {
+            ready = true;
+            try { e.target.getIframe().setAttribute('tabindex', '-1'); } catch (err) { /* ignore */ }
+            send({ type: 'ready' });
+            e.target.playVideo();
+            sendState();
+          },
+          onStateChange: function (e) {
+            if (e.data === 0) send({ type: 'ended' });
+            sendState();
+          },
+          onError: function (e) { send({ type: 'error', code: e.data }); }
+        }
+      });
+      setInterval(sendState, 500);
+    };
+
+    window.addEventListener('message', function (ev) {
+      if (ev.source !== window.parent) return;          // only the embedding app may control us
+      var m = ev.data;
+      if (!m || m.yc !== 1 || !ready) return;
+      switch (m.cmd) {
+        case 'play': player.playVideo(); break;
+        case 'pause': player.pauseVideo(); break;
+        case 'seek': player.seekTo(Math.max(0, +m.t || 0), true); break;
+        case 'load': if (VALID_ID.test(m.id || '')) player.loadVideoById(m.id); break;
+      }
+      sendState();
+    });
+
+    var s = document.createElement('script');
+    s.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(s);
+  })();
+  </script>
+</body>
+</html>
