@@ -35,20 +35,38 @@
     });
 
     var player = null, ready = false;
+    var lastTime = -1, lastEvent = -1, endedSent = false;
 
     function send(msg) {
       msg.yc = 1;
       try { window.parent.postMessage(msg, '*'); } catch (e) { /* no parent */ }
     }
 
+    function sendEnded() {
+      if (endedSent) return;
+      endedSent = true;
+      send({ type: 'ended' });
+    }
+
+    /* getPlayerState() is not always reliable when this page is itself embedded,
+       so playing / ended are also inferred from the time position. */
     function sendState() {
       if (!ready) return;
-      send({
-        type: 'state',
-        state: player.getPlayerState(),
-        time: player.getCurrentTime() || 0,
-        duration: player.getDuration() || 0
-      });
+      var time = player.getCurrentTime() || 0;
+      var duration = player.getDuration() || 0;
+      var state = player.getPlayerState();
+      if (state === undefined || state === -1 || state === 5) {
+        if (lastEvent !== -1 && lastEvent !== 5) state = lastEvent;
+        else state = time > lastTime + 0.05 ? 1 : (time > 0 ? 2 : -1);
+      }
+      if (state === 1 && lastTime >= 0 && time <= lastTime && lastEvent === -1) state = 2;
+      if (time < duration - 2) endedSent = false;                     // replay / seek back
+      if (state === 0 || (duration > 0 && time >= duration - 0.6 && time <= lastTime)) {
+        state = 0;
+        sendEnded();
+      }
+      lastTime = time;
+      send({ type: 'state', state: state, time: time, duration: duration });
     }
 
     if (!VALID_ID.test(q.v || '')) { send({ type: 'error', code: 'id' }); return; }
@@ -73,7 +91,8 @@
             sendState();
           },
           onStateChange: function (e) {
-            if (e.data === 0) send({ type: 'ended' });
+            lastEvent = e.data;
+            if (e.data === 0) sendEnded();
             sendState();
           },
           onError: function (e) { send({ type: 'error', code: e.data }); }
@@ -89,8 +108,8 @@
       switch (m.cmd) {
         case 'play': player.playVideo(); break;
         case 'pause': player.pauseVideo(); break;
-        case 'seek': player.seekTo(Math.max(0, +m.t || 0), true); break;
-        case 'load': if (VALID_ID.test(m.id || '')) player.loadVideoById(m.id); break;
+        case 'seek': player.seekTo(Math.max(0, +m.t || 0), true); lastTime = -1; break;
+        case 'load': if (VALID_ID.test(m.id || '')) { player.loadVideoById(m.id); endedSent = false; } break;
       }
       sendState();
     });
