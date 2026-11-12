@@ -66,7 +66,7 @@
         sendEnded();
       }
       lastTime = time;
-      send({ type: 'state', state: state, time: time, duration: duration });
+      send({ type: 'state', state: state, raw: player.getPlayerState(), time: time, duration: duration });
     }
 
     if (!VALID_ID.test(q.v || '')) { send({ type: 'error', code: 'id' }); return; }
@@ -85,6 +85,7 @@
         events: {
           onReady: function (e) {
             ready = true;
+            window.ycPlayer = e.target;   // for debugging in the browser console
             try { e.target.getIframe().setAttribute('tabindex', '-1'); } catch (err) { /* ignore */ }
             send({ type: 'ready' });
             e.target.playVideo();
