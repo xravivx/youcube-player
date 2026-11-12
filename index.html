@@ -36,6 +36,22 @@
 
     var player = null, ready = false;
     var lastTime = -1, lastEvent = -1, endedSent = false;
+    // Ad skipping: reloading the video drops the running ad. Ads report their own time,
+    // so a backward time jump marks where the real video was when a mid-roll ad began.
+    var videoId = q.v, jumped = false, resumeAt = 0, trackT = -1;
+
+    function trackJumps(time) {
+      if (trackT >= 0 && time < trackT - 2) { jumped = true; resumeAt = trackT; }
+      trackT = time;
+    }
+
+    function skipAd() {
+      var t = player.getCurrentTime() || 0, start;
+      if (!jumped) start = t > 120 ? t : 0;          // pre-roll ad → start from the beginning
+      else start = t < resumeAt ? resumeAt : t;      // mid-roll ad → back to where we were
+      jumped = false; trackT = -1; lastTime = -1; endedSent = false;
+      player.loadVideoById({ videoId: videoId, startSeconds: Math.max(0, start - 1) });
+    }
 
     function send(msg) {
       msg.yc = 1;
@@ -55,6 +71,7 @@
       var time = player.getCurrentTime() || 0;
       var duration = player.getDuration() || 0;
       var state = player.getPlayerState();
+      trackJumps(time);
       if (state === undefined || state === -1 || state === 5) {
         if (lastEvent !== -1 && lastEvent !== 5) state = lastEvent;
         else state = time > lastTime + 0.05 ? 1 : (time > 0 ? 2 : -1);
@@ -109,8 +126,14 @@
       switch (m.cmd) {
         case 'play': player.playVideo(); break;
         case 'pause': player.pauseVideo(); break;
-        case 'seek': player.seekTo(Math.max(0, +m.t || 0), true); lastTime = -1; break;
-        case 'load': if (VALID_ID.test(m.id || '')) { player.loadVideoById(m.id); endedSent = false; } break;
+        case 'seek': player.seekTo(Math.max(0, +m.t || 0), true); lastTime = -1; trackT = -1; break;
+        case 'skipad': skipAd(); break;
+        case 'load':
+          if (VALID_ID.test(m.id || '')) {
+            videoId = m.id; jumped = false; trackT = -1; endedSent = false;
+            player.loadVideoById(m.id);
+          }
+          break;
       }
       sendState();
     });
